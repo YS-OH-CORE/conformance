@@ -1273,6 +1273,10 @@ function sendStatelessJson(
   return res.json(normalizeStatelessResponse(method, payload));
 }
 
+function writeSseMessage(res: import('express').Response, msg: unknown) {
+  res.write(`event: message\ndata: ${JSON.stringify(msg)}\n\n`);
+}
+
 // Handle POST requests - stateful mode
 app.post('/mcp', async (req, res) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -2172,55 +2176,49 @@ app.post('/mcp', async (req, res) => {
       // Progressive IncompleteResult Stream Generator Handling
       if (name === 'test_streaming_elicitation') {
         res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Transfer-Encoding': 'chunked'
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache'
         });
 
-        res.write(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'notifications/progress', // Emits standard progress notice
-            params: { progressToken: 'token-abc', total: 100, value: 50 }
-          }) + '\n'
-        );
+        writeSseMessage(res, {
+          jsonrpc: '2.0',
+          method: 'notifications/progress', // Emits standard progress notice
+          params: { progressToken: 'token-abc', total: 100, value: 50 }
+        });
 
-        return res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            result: { content: [{ type: 'text', text: 'Streaming complete' }] }
-          })
-        );
+        writeSseMessage(res, {
+          jsonrpc: '2.0',
+          id,
+          result: { content: [{ type: 'text', text: 'Streaming complete' }] }
+        });
+        return res.end();
       }
 
       // Contextual Logging Constraints Verification Handler
       if (name === 'test_logging_tool') {
         res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Transfer-Encoding': 'chunked'
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache'
         });
 
         // RULE: No logs allowed if meta configuration lacks explicit log level bounds
         if (meta && meta['io.modelcontextprotocol/logLevel']) {
-          res.write(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              method: 'notifications/message',
-              params: {
-                level: 'info',
-                text: 'Diagnostic trace logging activated'
-              }
-            }) + '\n'
-          );
+          writeSseMessage(res, {
+            jsonrpc: '2.0',
+            method: 'notifications/message',
+            params: {
+              level: 'info',
+              text: 'Diagnostic trace logging activated'
+            }
+          });
         }
 
-        return res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            result: { content: [{ type: 'text', text: 'Logging evaluated' }] }
-          })
-        );
+        writeSseMessage(res, {
+          jsonrpc: '2.0',
+          id,
+          result: { content: [{ type: 'text', text: 'Logging evaluated' }] }
+        });
+        return res.end();
       }
 
       // Helper mutation hooks used by dynamic tests to force stream activity
@@ -2256,21 +2254,24 @@ app.post('/mcp', async (req, res) => {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache'
       });
-      const write = (msg: unknown) =>
-        res.write(`event: message\ndata: ${JSON.stringify(msg)}\n\n`);
       const dispatch = await getStatelessDispatchClient();
       try {
         const result = await dispatch.client.request(
           { method, params },
           ResultSchema as any
         );
-        for (const n of dispatch.drainNotifications()) write(n);
-        write(
+        for (const n of dispatch.drainNotifications()) {
+          writeSseMessage(res, n);
+        }
+        writeSseMessage(
+          res,
           normalizeStatelessResponse(method, { jsonrpc: '2.0', id, result })
         );
       } catch (e: any) {
-        for (const n of dispatch.drainNotifications()) write(n);
-        write({
+        for (const n of dispatch.drainNotifications()) {
+          writeSseMessage(res, n);
+        }
+        writeSseMessage(res, {
           jsonrpc: '2.0',
           id,
           error: { code: e.code ?? -32603, message: e.message, data: e.data }

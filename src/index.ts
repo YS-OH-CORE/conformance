@@ -702,7 +702,7 @@ program
           }
         }
 
-        const { totalFailed } = printServerSummary(allResults);
+        const { totalFailed, totalWarnings } = printServerSummary(allResults);
 
         if (options.expectedFailures) {
           const expectedFailuresConfig = await loadExpectedFailures(
@@ -727,7 +727,7 @@ program
         process.exit(
           requirements
             ? requirementsExitCode(requirements, 'server', allResults)
-            : totalFailed > 0
+            : totalFailed > 0 || totalWarnings > 0
               ? 1
               : 0
         );

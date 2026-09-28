@@ -1,0 +1,80 @@
+name: PR 533 session-capacity verification
+
+on:
+  push:
+    branches:
+      - ci/pr-533-capacity-20260928
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: verification
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: YS-OH-CORE/conformance
+          ref: 95dd2e2c64c7173e5f3ddfada7b03512f88eef89
+          fetch-depth: 4
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: modelcontextprotocol/go-sdk
+          ref: 827f90ba0c13edb546028df42fadc9f1211a4ff2
+          path: go-sdk
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.25.14'
+          cache: false
+      - name: Install dependencies and record runtime
+        working-directory: candidate
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/validation-results"
+          node --version > "$GITHUB_WORKSPACE/validation-results/node-version.log"
+          npm --version > "$GITHUB_WORKSPACE/validation-results/npm-version.log"
+          go version > "$GITHUB_WORKSPACE/validation-results/go-version.log"
+          npm ci 2>&1 | tee "$GITHUB_WORKSPACE/validation-results/npm-ci.log"
+      - name: Prepare exact pre-fix baseline
+        working-directory: candidate
+        run: |
+          git worktree add --detach "$GITHUB_WORKSPACE/baseline" 7169291ec0b68eb370fddcd9947313ab0d5e4156
+          ln -s "$GITHUB_WORKSPACE/candidate/node_modules" "$GITHUB_WORKSPACE/baseline/node_modules"
+      - name: Run existing CLI against two SDKs with session admission control
+        timeout-minutes: 95
+        run: |
+          node "$GITHUB_WORKSPACE/verification/.github/evidence/pr-533/run-capacity-evidence.mjs" \
+            --candidate "$GITHUB_WORKSPACE/candidate" \
+            --baseline "$GITHUB_WORKSPACE/baseline" \
+            --go-sdk "$GITHUB_WORKSPACE/go-sdk" \
+            --baseline-sha 7169291ec0b68eb370fddcd9947313ab0d5e4156 \
+            --candidate-sha 95dd2e2c64c7173e5f3ddfada7b03512f88eef89 \
+            --typescript-source "$GITHUB_WORKSPACE/baseline" \
+            --sdk-modes typescript,go \
+            --output "$GITHUB_WORKSPACE/capacity-results"
+      - name: Retain complete evidence including failures
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mcp533-capacity-verification
+          path: |
+            validation-results/**
+            capacity-results/**
+            !capacity-results/build-work/**
+          if-no-files-found: warn
+          retention-days: 30
